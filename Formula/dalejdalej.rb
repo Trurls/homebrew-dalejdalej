@@ -1,8 +1,8 @@
 class Dalejdalej < Formula
   desc "Monitor GitHub PRs with Claude AI — auto-rebase and CI triage"
   homepage "https://github.com/Trurls/homebrew-dalejdalej"
-  url "https://github.com/Trurls/homebrew-dalejdalej/archive/refs/tags/v0.0.7.tar.gz"
-  sha256 "fc7edf29a13875d61e2815e3216494be81004054e0ca7b9da7b71e485670552e"
+  url "https://github.com/Trurls/homebrew-dalejdalej/archive/refs/tags/v0.0.8.tar.gz"
+  sha256 "cae39707d088f2fd0d4f933e2bf62bc121ac214f75719ecf9788a4def72da703"
   license "MIT"
   head "ssh://git@github-personal/Trurls/homebrew-dalejdalej.git", branch: "main"
 
