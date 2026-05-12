@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG="$HOME/.dalejdalej.yaml"
+LOG="$(brew --prefix)/var/log/dalejdalej.log"
+
+usage() {
+  echo "Usage: dalejdalej <add|list|rm|start|stop|status|logs>" >&2
+  exit 1
+}
+
+init_config() {
+  if [[ ! -f "$CONFIG" ]]; then
+    echo "repos: []" > "$CONFIG"
+  fi
+}
+
+repo_name_from_remote() {
+  basename "$1" .git
+}
+
+get_current_remote() {
+  git remote get-url origin 2>/dev/null || {
+    echo "Error: not in a git repo or no 'origin' remote" >&2
+    exit 1
+  }
+}
+
+get_pr_number() {
+  gh pr view --json number --jq '.number' 2>/dev/null || {
+    echo "Error: no PR found for current branch" >&2
+    exit 1
+  }
+}
+
+[[ $# -lt 1 ]] && usage
+
+case "$1" in
+  add)
+    init_config
+
+    if [[ -n "${2:-}" && "${2}" =~ ^[0-9]+$ ]]; then
+      pr="$2"
+    else
+      pr=$(get_pr_number)
+    fi
+
+    remote=$(get_current_remote)
+    echo "Remote: $remote"
+    read -r -p "Use this remote? [Y/n] " confirm
+    [[ "${confirm,,}" == "n" ]] && exit 1
+
+    existing_dir=$(yq ".repos[] | select(.remote == \"$remote\") | .directory" "$CONFIG")
+
+    if [[ -z "$existing_dir" ]]; then
+      repo_name=$(repo_name_from_remote "$remote")
+      clone_dir="$HOME/dalejdalej/$repo_name"
+      if [[ ! -d "$clone_dir" ]]; then
+        echo "Cloning $remote → $clone_dir"
+        git clone "$remote" "$clone_dir"
+      fi
+      yq -i ".repos += [{\"remote\": \"$remote\", \"directory\": \"$clone_dir\", \"prs\": [$pr]}]" "$CONFIG"
+      echo "Added repo $remote with PR #$pr (checkout: $clone_dir)"
+    else
+      pr_exists=$(yq ".repos[] | select(.remote == \"$remote\") | .prs[] | select(. == $pr)" "$CONFIG" 2>/dev/null || true)
+      if [[ -n "$pr_exists" ]]; then
+        echo "PR #$pr already monitored for $remote"
+      else
+        yq -i "(.repos[] | select(.remote == \"$remote\")).prs += [$pr]" "$CONFIG"
+        echo "Added PR #$pr to $remote"
+      fi
+    fi
+    ;;
+
+  list)
+    init_config
+    repo_count=$(yq '.repos | length' "$CONFIG")
+    if [[ "$repo_count" -eq 0 ]]; then
+      echo "No repos monitored"
+    else
+      for i in $(seq 0 $((repo_count - 1))); do
+        remote=$(yq ".repos[$i].remote" "$CONFIG")
+        dir=$(yq ".repos[$i].directory" "$CONFIG")
+        pr_list=$(yq ".repos[$i].prs | map(tostring) | join(\", \")" "$CONFIG")
+        printf "Remote: %s\nDir:    %s\nPRs:    %s\n\n" "$remote" "$dir" "$pr_list"
+      done
+    fi
+    ;;
+
+  rm)
+    init_config
+    repo_count=$(yq '.repos | length' "$CONFIG")
+
+    if [[ -n "${2:-}" && "${2}" =~ ^[0-9]+$ ]]; then
+      pr="$2"
+      candidates=()
+      for i in $(seq 0 $((repo_count - 1))); do
+        r=$(yq ".repos[$i].remote" "$CONFIG")
+        match=$(yq ".repos[$i].prs[] | select(. == $pr)" "$CONFIG" 2>/dev/null || true)
+        [[ -n "$match" ]] && candidates+=("$r")
+      done
+      if [[ ${#candidates[@]} -eq 0 ]]; then
+        echo "PR #$pr not found in any monitored repo" >&2; exit 1
+      fi
+      selected=$(printf '%s\n' "${candidates[@]}" | fzf --multi --prompt "Remove PR #$pr from: ") || exit 0
+      while IFS= read -r remote; do
+        [[ -z "$remote" ]] && continue
+        yq -i "(.repos[] | select(.remote == \"$remote\")).prs -= [$pr]" "$CONFIG"
+        echo "Removed PR #$pr from $remote"
+      done <<< "$selected"
+    else
+      entries=()
+      for i in $(seq 0 $((repo_count - 1))); do
+        r=$(yq ".repos[$i].remote" "$CONFIG")
+        pc=$(yq ".repos[$i].prs | length" "$CONFIG")
+        for j in $(seq 0 $((pc - 1))); do
+          pn=$(yq ".repos[$i].prs[$j]" "$CONFIG")
+          entries+=("$r #$pn")
+        done
+      done
+      if [[ ${#entries[@]} -eq 0 ]]; then
+        echo "No PRs monitored"; exit 0
+      fi
+      selected=$(printf '%s\n' "${entries[@]}" | fzf --multi --prompt "Remove: ") || exit 0
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        remote="${line% #*}"
+        pr="${line##* #}"
+        yq -i "(.repos[] | select(.remote == \"$remote\")).prs -= [$pr]" "$CONFIG"
+        echo "Removed PR #$pr from $remote"
+      done <<< "$selected"
+    fi
+    ;;
+
+  start)
+    _prefix="$(brew --prefix)"
+    _plist="$HOME/Library/LaunchAgents/homebrew.mxcl.dalejdalej.plist"
+    mkdir -p "$HOME/Library/LaunchAgents"
+    # Write plist without "System" session type, which causes launchctl bootstrap error 5 on macOS 15+
+    cat > "$_plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>homebrew.mxcl.dalejdalej</string>
+	<key>LimitLoadToSessionType</key>
+	<array>
+		<string>Aqua</string>
+		<string>Background</string>
+		<string>LoginWindow</string>
+		<string>StandardIO</string>
+	</array>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$_prefix/opt/dalejdalej/libexec/dalejdalej-daemon.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>$LOG</string>
+	<key>StandardOutPath</key>
+	<string>$LOG</string>
+	<key>StartInterval</key>
+	<integer>1800</integer>
+</dict>
+</plist>
+PLIST
+    launchctl bootstrap "gui/$(id -u)" "$_plist"
+    echo "Log: $LOG"
+    ;;
+  stop)
+    brew services stop dalejdalej
+    ;;
+  status)
+    brew services info dalejdalej
+    ;;
+  logs)
+    if [[ "${2:-}" == "-v" ]]; then
+      tail -f "$LOG"
+    else
+      tail -f "$LOG" | grep -v '^ToolOutput('
+    fi
+    ;;
+  *)
+    usage
+    ;;
+esac

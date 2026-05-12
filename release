@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Bump patch version, tag, push, update formula sha256, push formula.
+set -euo pipefail
+
+FORMULA="Formula/dalejdalej.rb"
+REPO="Trurls/homebrew-dalejdalej"
+
+# Must run from repo root
+[[ -f "$FORMULA" ]] || { echo "Run from repo root" >&2; exit 1; }
+
+# Require clean working tree
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "Uncommitted changes — commit first" >&2
+  exit 1
+fi
+
+# Bump patch version based on latest GitHub tag
+GH_USER="${1:-}"
+TOKEN=$(gh auth token ${GH_USER:+--user "$GH_USER"} 2>/dev/null)
+current=$(curl -sL -H "Authorization: Bearer $TOKEN" \
+  "https://api.github.com/repos/${REPO}/tags" \
+  | jq -r '.[0].name // "v0.0.0"')
+IFS='.' read -r major minor patch <<< "${current#v}"
+next="v${major}.${minor}.$((patch + 1))"
+echo "Releasing $current → $next"
+
+# Push any unpushed commits, tag, push tag
+git push origin main
+git tag "$next"
+git push origin "$next"
+
+# Wait for GitHub to generate the tarball
+url="https://github.com/${REPO}/archive/refs/tags/${next}.tar.gz"
+echo "Waiting for GitHub tarball..."
+until curl -sLk -H "Authorization: Bearer $TOKEN" -o /dev/null -w "%{http_code}" "$url" | grep -q "^200$"; do
+  sleep 2
+done
+
+sha=$(curl -sLk -H "Authorization: Bearer $TOKEN" "$url" | shasum -a 256 | awk '{print $1}')
+echo "sha256: $sha"
+
+# Update formula: url version and sha256
+sed -i '' "s|/refs/tags/v[0-9]*\.[0-9]*\.[0-9]*\.tar\.gz|/refs/tags/${next}.tar.gz|" "$FORMULA"
+sed -i '' "s|sha256 \"[a-f0-9]*\"|sha256 \"${sha}\"|" "$FORMULA"
+
+git add "$FORMULA"
+git commit -m "release: $next"
+git push origin main
+
+echo "Done. Install/upgrade with: brew upgrade dalejdalej"

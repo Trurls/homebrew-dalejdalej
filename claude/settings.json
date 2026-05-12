@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Read(__HOME__/dalejdalej/**)",
+      "Edit(__HOME__/dalejdalej/**)",
+      "Write(__HOME__/dalejdalej/**)",
+      "Bash(*)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "network": {
+      "allowedDomains": ["*.github.com", "github.com", "*.blob.core.windows.net", "*.githubusercontent.com", "pypi.org", "files.pythonhosted.org"]
+    },
+    "filesystem": {
+      "allowWrite": [
+        "__HOME__/dalejdalej/**",
+        "__HOME__/dalejdalej/**/.git/**",
+        "__HOME__/.local/share/uv/**",
+        "/tmp"
+      ],
+      "allowEdit": [
+        "__HOME__/dalejdalej/**",
+        "__HOME__/dalejdalej/**/.git/**",
+        "__HOME__/.local/share/uv/**",
+        "/tmp"
+      ],
+      "allowRead": [
+        "__HOME__/dalejdalej/**",
+        "__HOME__/dalejdalej/**/.git/**",
+        "__HOME__/.local/share/uv/**",
+        "/tmp"
+      ]
+
+    }
+  },
+  "enabledPlugins": {
+    "pyright-lsp@claude-plugins-official": true
+  },
+  "skipDangerousModePermissionPrompt": false,
+  "networkSandbox": false
+}
